@@ -6,6 +6,8 @@ from os import getenv
 from socket import gaierror
 
 from flask import Flask
+from fastapi import FastAPI
+import logging
 
 # Mypy errors out with Module 'flask' has no attribute '__version__'.
 # Python can find flask's version but mypy cannot.
@@ -13,6 +15,7 @@ from flask import Flask
 from flask import __version__ as flask_version  # type: ignore
 from flask_cors import CORS
 from flask_restx import __version__ as restx_version
+from fastapi import __version__ as fastapi_version
 from flask_talisman import Talisman
 from lazy_object_proxy import Proxy
 from packit.utils import set_logging
@@ -22,13 +25,65 @@ from werkzeug.middleware.dispatcher import DispatcherMiddleware
 
 from packit_service import __version__ as ps_version
 from packit_service.config import ServiceConfig
+from pydantic_settings import BaseSettings
 from packit_service.sentry_integration import configure_sentry
-from packit_service.service.api import blueprint
+from packit_service.service.api import blueprint, router
 from packit_service.utils import log_package_versions
 
-set_logging(logger_name="packit_service", level=logging.DEBUG)
+# set_logging(logger_name="packit_service", level=logging.DEBUG)
+
+def get_fastapi_application():
+    configure_sentry(
+        runner_type="packit-service",
+        celery_integration=True,
+        sqlalchemy_integration=True,
+        fastapi_integration=True
+    )
+    app: FastAPI = FastAPI()
+    app.include_router(router)
+    service_config = ServiceConfig.get_service_config()
+
+    config: dict = {
+        "SERVER_NAME": service_config.server_name,
+        "PREFERRED_URL_SCHEME": "https",
+        "DEBUG": getenv("DEPLOYMENT") in ("dev", "stg")
+    }
+
+    app.state.config = config
+    
+    logger = logging.getLogger("packit_service")
+    logger.setLevel(logging.DEBUG)
+
+    app.state.logger = logger
+    syslog_host = getenv("SYSLOG_HOST", "fluentd")
+    syslog_port = int(getenv("SYSLOG_PORT", 5140))
+    logger.info(f"Setup logging to syslog -> {syslog_host}:{syslog_port}")
+    try:
+        handler = logging.handlers.SysLogHandler(address=(syslog_host, syslog_port))
+    except (ConnectionRefusedError, gaierror):
+        logger.info(f"{syslog_host}:{syslog_port} not available")
+    else:
+        handler.setLevel(logging.DEBUG)
+        project = getenv("PROJECT", "packit")
+        handler.setFormatter(RFC5424Formatter(msgid=project))
+        logger.addHandler(handler)
+    
+    logger.info(
+        f"server name = {service_config.server_name}, all HTTP requests need to use this URL!",
+    )
+
+    package_versions = [
+        ("Fastapi", fastapi_version)
+        ("Packit Service", ps_version),
+    ]
+    log_package_versions(package_versions)
+
+    logger.debug(f"URL map = {app.routes}")
+    return app
 
 
+
+    
 def get_flask_application():
     configure_sentry(
         runner_type="packit-service",
@@ -67,7 +122,7 @@ def get_flask_application():
     )
 
     package_versions = [
-        ("Flask", flask_version),
+        ("Flask", fastapi_version),
         ("Flask RestX", restx_version),
         ("Packit Service", ps_version),
     ]

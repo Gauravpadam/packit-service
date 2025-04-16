@@ -3,6 +3,7 @@
 
 from flask import Blueprint
 from flask_restx import Api
+from fastapi import APIRouter
 
 from packit_service.service.api.allowlist import ns as allowlist_ns
 from packit_service.service.api.bodhi_updates import ns as bodhi_updates_ns
@@ -29,6 +30,11 @@ api = Api(
     version="1.0",
     title="Packit Service API",
     description="https://packit.dev/",
+)
+
+router: APIRouter = APIRouter(
+    prefix="/api",
+    tags=["api"]
 )
 
 api.add_namespace(copr_builds_ns)
